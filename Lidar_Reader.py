@@ -94,7 +94,7 @@ def display_live_lidar_reading(max_dist=800, static=False, verbose=False):
         lidar_data = get_next_frame()
 
         start_angle = lidar_data['start_angle'] / 100
-        end_angle = lidar_data['end_angle'] / 100\
+        end_angle = lidar_data['end_angle'] / 100
         # maybe? start end angles are looking very suspicious
         if start_angle > end_angle:
             end_angle += 360
