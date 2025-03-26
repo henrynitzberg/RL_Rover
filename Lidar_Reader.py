@@ -1,56 +1,59 @@
-import serial
 import struct
-import time
+import serial
 import numpy as np
+import argparse
 import matplotlib.pyplot as plt
+import os
+import time
 
-DISTS = np.array([])
-ANGLES = np.array([])
+# #define POINT_PER_PACK 12
+# #define HEADER 0x54
 
-# Define constants based on your provided data structure
+# typedef struct   attribute ((packed)) { uint16_t distance;
+# uint8_t intensity;
+
+# } LidarPointStructDef;
+
+# typedef struct   attribute ((packed)) {
+# uint8_ t  header;
+# uint8_ t  ver_ len;
+# uint16_ t  speed;
+# uint16 t   start angle;
+# LidarPointStructDef point[POINT_ PER_ PACK];
+# uint16_ t   end_ angle;
+# uint16_ t   timestamp;
+# uint8_ t   crc8;
+# )LiDARFrame TypeDef;
+
+# in the python struct lib: 
+# B = 1 byte, unsigned char
+# H = 2 bytes, unsigned short
+
 POINTS_PER_PACK = 12
 HEADER = 0x54
 
 # Define the format for the Lidar point data
-LIDAR_POINT_STRUCT = ' H B'  # uint16_t distance (2 bytes), uint8_t intensity (1 byte)
-
-#B = 1 byte, H = 2 bytes
+LidarPointStructDef = ' H B'  # uint16_t distance (2 bytes), uint8_t intensity (1 byte)
 
 # Define the format for the full LIDAR frame
-LIDAR_FRAME_FORMAT = 'B B H H' + LIDAR_POINT_STRUCT * POINTS_PER_PACK + ' H H B'
-LIDAR_FRAME_SIZE = struct.calcsize(LIDAR_FRAME_FORMAT)
+LiDARFrameTypeDef = 'B B H H' + LidarPointStructDef * POINTS_PER_PACK + ' H H B'
 
-baudrates = [4800, 9600, 19200, 38400, 57600, 115200, 230400]
+LiDARFrameSize = struct.calcsize(LiDARFrameTypeDef)
 
-# Open the serial port
-ser = serial.Serial('/dev/ttyUSB0', baudrates[-1], timeout=1)
-#230400
-def parse_lidar_frame(frame):
-    """ Parse a raw Lidar frame into its respective components. """
-    unpacked_data = struct.unpack(LIDAR_FRAME_FORMAT, frame)
+def parse_lidar_frame(packed_data):
+    unpacked_data = struct.unpack(LiDARFrameTypeDef, packed_data)
 
-    # Header
     header = unpacked_data[0]
-    # Version/Length
     ver_len = unpacked_data[1]
-    # Speed
     speed = unpacked_data[2]
-    # Start angle
     start_angle = unpacked_data[3]
-    # Lidar points
-    points = []
+    points = np.zeros((POINTS_PER_PACK, 2))
     for i in range(POINTS_PER_PACK):
-        distance = unpacked_data[4 + i * 2]  # 2 bytes for distance
-        intensity = unpacked_data[5 + i * 2]  # 1 byte for intensity
-        if (intensity >= 200):
-            points.append((distance, intensity))
-        else:
-            points.append((0, intensity))
-    # End angle
+        distance = unpacked_data[4 + (i * 2)]  # 2 bytes for distance
+        intensity = unpacked_data[5 + (i * 2)]  # 1 byte for intensity
+        points[i] = (distance, intensity)
     end_angle = unpacked_data[4 + POINTS_PER_PACK * 2]
-    # Timestamp
     timestamp = unpacked_data[5 + POINTS_PER_PACK * 2]
-    # CRC8
     crc8 = unpacked_data[6 + POINTS_PER_PACK * 2]
 
     return {
@@ -64,85 +67,72 @@ def parse_lidar_frame(frame):
         'crc8': crc8
     }
 
-def get_lidar():
 
-    """ Continuously read data from the Lidar sensor. """
+# if this line is causing trouble, try 'sudo chmod a+rw /dev/ttyUSB0'
+ser = serial.Serial('/dev/ttyUSB0', 230400, timeout=1)
+
+# waits until next frame is available
+def get_next_frame():
     while True:
-        if ser.in_waiting >= LIDAR_FRAME_SIZE:
-            frame = ser.read(LIDAR_FRAME_SIZE)
-            # Check header byte
+        if ser.in_waiting >= LiDARFrameSize:
+            frame = ser.read(LiDARFrameSize)
             if frame[0] == HEADER:
-                lidar_data = parse_lidar_frame(frame)
-                return lidar_data
-            else:
-                pass
-                #print("Invalid header byte, skipping frame")
-                #lidar_data = parse_lidar_frame(frame)
-                #print(lidar_data)
-                #time.sleep(5)
-        else:
-            #pass
-            time.sleep(0.1)
-            #print("Waiting for more data...")
+                return parse_lidar_frame(frame)
 
-    
-def display_live_lidar_reading():
+def display_live_lidar_reading(max_dist=800, static=False, verbose=False):
 
     DISTS = np.array([])
     ANGLES = np.array([])
-    # Number of distances
-    num_readings = 12
-    
-    # Generate initial angles based on the number of readings
-    #angles = np.linspace(start_angle, end_angle, num_readings)
-    
+
     # Create the figure and axis for the polar plot
     fig, ax = plt.subplots(subplot_kw={'projection': 'polar'})
     ax.set_title("Live LiDAR Sensor Reading", va='bottom')
-
-    # Use scatter instead of plot
     scatter = ax.scatter([], [], marker='o', color='b')
+    ax.set_ylim(0, max_dist) 
 
-    # Set the radial limits (distance range)
-    ax.set_ylim(0, 1000)  # Adjust this according to your expected distance range
-    
-    # Loop to update the plot in real-time
     while True:
-        # Get new LiDAR readings
-        lidar_data = get_lidar()
+        lidar_data = get_next_frame()
 
         start_angle = lidar_data['start_angle'] / 100
-        end_angle = lidar_data['end_angle'] / 100
+        end_angle = lidar_data['end_angle'] / 100\
+        # maybe? start end angles are looking very suspicious
+        if start_angle > end_angle:
+            end_angle += 360
 
-        distances = np.array(lidar_data['points'])[:, 0]
+        step = (end_angle - start_angle) / (POINTS_PER_PACK - 1)
 
-
-        print(lidar_data['points'])
-        #print(distances)
-
-        #double check and probably fix
-        angles = np.linspace(start_angle, end_angle, 12)
-        step = (end_angle - start_angle)/(POINTS_PER_PACK - 1)
-        angles = []
+        distances = lidar_data['points'][:, 0]
+        angles = np.zeros(POINTS_PER_PACK)
         for i in range(POINTS_PER_PACK):
-            angles.append(start_angle + step*i)
-
-        print('start angle, end angle, step:', start_angle, end_angle, step)
+            angles[i] = start_angle + i
+        
 
         # Convert angles from degrees to radians
         angles_radians = np.radians(angles)
+        if static:
+            DISTS = np.concatenate((DISTS, distances), axis=0)
+            ANGLES = np.concatenate((ANGLES, angles_radians), axis=0)
+        else:
+            DISTS = distances
+            ANGLES = angles_radians
 
-        DISTS = np.concatenate((DISTS, distances), axis=0)
-        ANGLES = np.concatenate((ANGLES, angles_radians), axis=0)
-        # Update the plot with new data
-        #line.set_data(angles_radians, distances)
-        scatter.set_offsets(np.column_stack((-1 * ANGLES, DISTS)))
-        # Redraw the plot
+        scatter.set_offsets(np.c_[ANGLES, DISTS])
+        if verbose:
+            print('-')
+            print(f"new data posted at {time.strftime('%H:%M:%S')}")
+            print(f"(start angle, stop angle): ({start_angle}, {end_angle})")
+            print(f"sweep range: {end_angle - start_angle}")
+
+
         plt.draw()
-        
-        # Pause to simulate real-time data fetching (adjust as needed)
-        plt.pause(0.1)  # 0.1 seconds delay between updates
+        plt.pause(0.1)
+
 
 if __name__ == '__main__':
-    display_live_lidar_reading()
-    #read_lidar_data()
+    parser = argparse.ArgumentParser(description="argparser")
+    parser.add_argument('-t', '--test', action='store_true', help="display lidar readings as video")
+    parser.add_argument('-v', '--verbose', action='store_true', help="print on recieve data")
+    args = parser.parse_args()
+
+    if args.test:
+        display_live_lidar_reading(max_dist=800, static=True, verbose=args.verbose)
