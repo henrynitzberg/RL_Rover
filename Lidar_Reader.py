@@ -83,6 +83,7 @@ def display_live_lidar_reading(max_dist=800, static=False, verbose=False):
 
     DISTS = np.array([])
     ANGLES = np.array([])
+    TIMES = []
 
     # Create the figure and axis for the polar plot
     fig, ax = plt.subplots(subplot_kw={'projection': 'polar'})
@@ -90,22 +91,54 @@ def display_live_lidar_reading(max_dist=800, static=False, verbose=False):
     scatter = ax.scatter([], [], marker='o', color='b')
     ax.set_ylim(0, max_dist) 
 
+    start_angle = 0
+
     while True:
         lidar_data = get_next_frame()
 
+        # if the speed is not 6 RPM, skip this frame
+        radar_speed_deg = lidar_data['speed']
+        if abs((radar_speed_deg / 360) - 6) > .2:
+            continue
+        
+        # waits until we have a reasonable Hertz approximation
+        TIMES.append(time.time())
+        if len(TIMES) > 10:
+            time_diffs = np.diff(np.array(TIMES[-10:]))
+            avg_time_diff = np.mean(time_diffs)
+        else:
+            continue
+
         start_angle = lidar_data['start_angle'] / 100
         end_angle = lidar_data['end_angle'] / 100
+        # end_angle = avg_time_diff * radar_speed_deg + start_angle
         # maybe? start end angles are looking very suspicious
         if start_angle > end_angle:
             end_angle += 360
-
+        elif end_angle - start_angle < 200:
+            end_angle += 360
         step = (end_angle - start_angle) / (POINTS_PER_PACK - 1)
+
+        # Adjust angles if necessary
+        if start_angle > end_angle:
+            end_angle += 360
+        elif end_angle - start_angle < 200:
+            end_angle += 360
+        step = (end_angle - start_angle) / (POINTS_PER_PACK - 1)
+
+        # # Calculate start and end angles based on previous measurement time and rotational speed
+        # time_diff = TIMES[-1] - TIMES[-2]
+        # print(time_diff)
+        # start_angle = (start_angle + time_diff * radar_speed_deg) % 360
+        # end_angle = start_angle + (radar_speed_deg) * time_diff
+        # step = (end_angle - start_angle) / (POINTS_PER_PACK- 1)
+
 
         distances = lidar_data['points'][:, 0]
         angles = np.zeros(POINTS_PER_PACK)
         for i in range(POINTS_PER_PACK):
-            angles[i] = start_angle + i
-        
+            angles[i] = start_angle + i * step
+
 
         # Convert angles from degrees to radians
         angles_radians = np.radians(angles)
@@ -116,12 +149,16 @@ def display_live_lidar_reading(max_dist=800, static=False, verbose=False):
             DISTS = distances
             ANGLES = angles_radians
 
-        scatter.set_offsets(np.c_[ANGLES, DISTS])
+        scatter.set_offsets(np.c_[-1 * ANGLES, DISTS])
         if verbose:
             print('-')
             print(f"new data posted at {time.strftime('%H:%M:%S')}")
             print(f"(start angle, stop angle): ({start_angle}, {end_angle})")
             print(f"sweep range: {end_angle - start_angle}")
+            print(f"RPM: {radar_speed_deg / 360}") # also fishy, sometimes its significanly > 6
+            print(f"angle increment between distances: {step}")
+            if len(TIMES) > 10:
+                print(f"average hz over last 10 frames: {1 / avg_time_diff}")
 
 
         plt.draw()
@@ -135,4 +172,4 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     if args.test:
-        display_live_lidar_reading(max_dist=800, static=True, verbose=args.verbose)
+        display_live_lidar_reading(max_dist=400, static=True, verbose=args.verbose)
