@@ -79,7 +79,37 @@ def get_next_frame():
             if frame[0] == HEADER:
                 return parse_lidar_frame(frame)
 
-def display_live_lidar_reading(max_dist=800, static=False, verbose=False):
+# retrieves speed at which lidar sensor is spinning in deg/s
+def get_speed_deg(lidar_data):
+    return lidar_data['speed']
+
+# gets distances of lidar scans in meters
+def get_distances(lidar_data):
+    return lidar_data['points'][:, 0] / 1000
+
+def get_intensities(lidar_data):
+    lidar_data['points'][:, 1]
+
+# gets angles of lidar scans in degrees
+def get_angles(lidar_data):
+    distances_mm = lidar_data['points'][:, 0]
+    # 90 deg of the sensors vision should be < 15 cm. The center of that region
+    # can be labeled 180 degrees
+
+    angles = np.zeros(POINTS_PER_PACK)
+    start_angle = lidar_data['start_angle'] / 100
+    end_angle = lidar_data['end_angle'] / 100
+
+    if (start_angle > end_angle) or (end_angle - start_angle < 200):
+        end_angle += 360
+
+    step = (end_angle - start_angle) / (POINTS_PER_PACK - 1)
+    for i in range(POINTS_PER_PACK):
+        angles[i] = start_angle + i * step
+
+    return angles
+
+def display_live_lidar_reading(max_dist=8, static=False, verbose=False):
 
     DISTS = np.array([])
     ANGLES = np.array([])
@@ -97,7 +127,7 @@ def display_live_lidar_reading(max_dist=800, static=False, verbose=False):
         lidar_data = get_next_frame()
 
         # if the speed is not 6 RPM, skip this frame
-        radar_speed_deg = lidar_data['speed']
+        radar_speed_deg = get_speed_deg(lidar_data)
         if abs((radar_speed_deg / 360) - 6) > .2:
             continue
         
@@ -109,36 +139,11 @@ def display_live_lidar_reading(max_dist=800, static=False, verbose=False):
         else:
             continue
 
-        start_angle = lidar_data['start_angle'] / 100
-        end_angle = lidar_data['end_angle'] / 100
-        # end_angle = avg_time_diff * radar_speed_deg + start_angle
-        # maybe? start end angles are looking very suspicious
-        if start_angle > end_angle:
-            end_angle += 360
-        elif end_angle - start_angle < 200:
-            end_angle += 360
-        step = (end_angle - start_angle) / (POINTS_PER_PACK - 1)
+        # get distances
+        distances = get_distances(lidar_data)
 
-        # Adjust angles if necessary
-        if start_angle > end_angle:
-            end_angle += 360
-        elif end_angle - start_angle < 200:
-            end_angle += 360
-        step = (end_angle - start_angle) / (POINTS_PER_PACK - 1)
-
-        # # Calculate start and end angles based on previous measurement time and rotational speed
-        # time_diff = TIMES[-1] - TIMES[-2]
-        # print(time_diff)
-        # start_angle = (start_angle + time_diff * radar_speed_deg) % 360
-        # end_angle = start_angle + (radar_speed_deg) * time_diff
-        # step = (end_angle - start_angle) / (POINTS_PER_PACK- 1)
-
-
-        distances = lidar_data['points'][:, 0]
-        angles = np.zeros(POINTS_PER_PACK)
-        for i in range(POINTS_PER_PACK):
-            angles[i] = start_angle + i * step
-
+        # get angles
+        angles = get_angles(lidar_data)
 
         # Convert angles from degrees to radians
         angles_radians = np.radians(angles)
@@ -153,13 +158,12 @@ def display_live_lidar_reading(max_dist=800, static=False, verbose=False):
         if verbose:
             print('-')
             print(f"new data posted at {time.strftime('%H:%M:%S')}")
-            print(f"(start angle, stop angle): ({start_angle}, {end_angle})")
-            print(f"sweep range: {end_angle - start_angle}")
+            print(f"(start angle, stop angle): ({angles[-1]}, {angles[0]})")
+            print(f"sweep range: {angles[-1] - angles[0]}")
             print(f"RPM: {radar_speed_deg / 360}") # also fishy, sometimes its significanly > 6
-            print(f"angle increment between distances: {step}")
+            print(f"angle increment between distances: {angles[1] - angles[0]}")
             if len(TIMES) > 10:
                 print(f"average hz over last 10 frames: {1 / avg_time_diff}")
-
 
         plt.draw()
         plt.pause(0.1)
@@ -172,4 +176,4 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     if args.test:
-        display_live_lidar_reading(max_dist=400, static=True, verbose=args.verbose)
+        display_live_lidar_reading(max_dist=4, static=True, verbose=args.verbose)
