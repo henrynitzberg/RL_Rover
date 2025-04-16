@@ -31,6 +31,7 @@ typedef struct __attribute__((packed)) {
 } LiDARFrameTypeDef;
 
 // Function to configure the serial port
+// if you're having trouble: sudo chmod a+rw /dev/ttyUSB0
 int configure_serial_port(const char *device) {
   int fd = open(device, O_RDWR | O_NOCTTY | O_NDELAY);
   if (fd == -1) {
@@ -128,7 +129,10 @@ int main() {
   while (true) {
     if (read_lidar_frame(fd, frame)) {
       Json::Value json_frame = lidar_frame_to_json(frame);
-      output << json_frame.toStyledString() << std::endl;
+      Json::StreamWriterBuilder writer;
+      writer["indentation"] = ""; // No indentation
+      std::string json_str = Json::writeString(writer, json_frame);
+      output << json_str << std::endl;
       output.flush();
     }
     usleep(100000); // Sleep for a short time (100ms)
