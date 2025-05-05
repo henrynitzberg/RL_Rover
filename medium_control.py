@@ -9,7 +9,7 @@ import select
 # --- Configuration ---
 RIGHT_PIN       = 17
 LEFT_PIN        = 26
-PULSE_FREQUENCY = 40    # Hz
+PULSE_FREQUENCY = 20    # Hz
 STUTTER_DC      = 50    # duty cycle % for stutter
 
 # --- Cleanup on exit ---
