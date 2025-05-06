@@ -1,85 +1,86 @@
 import numpy as np
 import matplotlib.pyplot as plt
-import cv2
+from matplotlib.colors import ListedColormap
 
-import gymnasium as gym
-from gymnasium import spaces
-
-import stable_baselines3 as sb3
-
-
-# make map
-MAP_DIMS = (10, 15)
+# walkable cells: 0
+# walls: 1
+# goal: 2
+custom_map = ListedColormap(["white", "black", "green"])
 
 
-def make_map():
-    map = np.zeros(MAP_DIMS, dtype=int)
-
-    map[0, : MAP_DIMS[1]] = 1
-    map[MAP_DIMS[0] - 1, : MAP_DIMS[1]] = 1
-    map[: MAP_DIMS[0], 0] = 1
-    map[: MAP_DIMS[0], MAP_DIMS[1] - 1] = 1
-
-    return map
+def generate_gridworld(num_rows, num_cols, goal_loc=(1, 1)):
+    grid = np.zeros((num_rows, num_cols)) + 1
+    grid[1:-1, 1:-1] = 0  # walkable cells
+    grid[goal_loc] = 2  # goal cell
+    return grid
 
 
-def state_to_image(map, state, goal_loc=None):
-    # Convert the map to a binary image
-    img = np.zeros((map.shape[0], map.shape[1]), dtype=np.uint8)
-    img[map == 1] = 0  # Set walls to white
-    img[map == 0] = 255  # Set free space to black
+# grid is the gridworld
+# state is a dictionary representing information about the agent's state
+# wait is the time to wait before closing the plot
+def plot_gridworld(grid, state={}, wait=-1):
+    fig, ax = plt.subplots()
+    ax.imshow(grid, cmap=custom_map)
 
-    img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+    # Set major ticks at cell boundaries
+    ax.set_xticks(np.arange(-0.5, grid.shape[1], 1))
+    ax.set_yticks(np.arange(-0.5, grid.shape[0], 1))
 
-    if "loc" in state:
-        agent_loc = state["loc"]
-        # print(f"placing agent at: {agent_loc}")
-        img[agent_loc[0], agent_loc[1]] = (0, 255, 0)
-    if goal_loc is not None:
-        img[goal_loc[0], goal_loc[1]] = (255, 0, 0)
+    # Add gridlines
+    ax.grid(color="black", linestyle="-", linewidth=1)
+
+    # Remove tick labels
+    ax.set_xticklabels([])
+    ax.set_yticklabels([])
+
+    # Turn off axis ticks
+    ax.tick_params(axis="both", which="both", length=0)
+
+    if "agent_position" in state:
+        (agent_row, agent_col) = state["agent_position"]
+        # Draw red dot for agent
+        ax.plot(agent_col, agent_row, "ro", markersize=20)
+        if "agent_angle" in state:
+            angle = state["agent_angle"]
+            # Draw arrow for agent direction
+            dx = np.cos(angle)
+            dy = np.sin(angle)
+            ax.arrow(
+                agent_col,
+                agent_row,
+                dx,
+                dy,
+                head_width=0.3,
+                head_length=0.5,
+                fc="red",
+                ec="red",
+            )
+
     if "angles" in state and "dists" in state:
         angles = state["angles"]
         dists = state["dists"]
-        for angle, dist in zip(angles, dists):
-            x = int(agent_loc[0] + dist * np.cos(angle))
-            y = int(agent_loc[1] + dist * np.sin(angle))
-            img[x, y] = (0, 0, 255)
-
-    goal_width = 400
-    scale_factor = int(goal_width / MAP_DIMS[0])
-    new_dims = (MAP_DIMS[1] * scale_factor, MAP_DIMS[0] * scale_factor)
-
-    img = cv2.resize(img, new_dims, interpolation=cv2.INTER_NEAREST)
-    if "loc" in state and "angles" in state and "dists" in state:
-        agent_loc = state["loc"]
-        angles = state["angles"]
-        dists = state["dists"]
-
-        scaled_loc = (
-            int((agent_loc[0] + 0.5) * scale_factor),
-            int((agent_loc[1] + 0.5) * scale_factor),
-        )
-
-        for angle, dist in zip(angles, dists):
-            x = int(
-                (agent_loc[0] * scale_factor) + ((dist * scale_factor) * np.cos(angle))
-            )
-            y = int(
-                (agent_loc[1] * scale_factor) + ((dist * scale_factor) * np.sin(angle))
-            )
-            cv2.line(
-                img,
-                (scaled_loc[1], scaled_loc[0]),
-                (y, x),
-                (0, 0, 255),
-                1,
+        for i, angle in enumerate(angles):
+            # Draw lidar rays
+            dx = dists[i] * np.cos(angle)
+            dy = dists[i] * np.sin(angle)
+            ax.plot(
+                [agent_col, agent_col + dx],
+                [agent_row, agent_row + dy],
+                "b-",
+                linewidth=2,
             )
 
-    return img
+    plt.draw()
+    if wait > 0:
+        plt.waitforbuttonpress(timeout=wait)
+    else:
+        plt.waitforbuttonpress()  # waits until a key is pressed
+    plt.close()
 
 
-def gen_lidar_data(map, loc, spread=(5, 7)):
+def get_lidar_scans(grid, agent_loc, spread=(5, 7)):
     start_angle = np.random.uniform(0, 2 * np.pi)
+    # start_angle = 0
     spread = np.random.uniform(np.deg2rad(spread[0]), np.deg2rad(spread[1]))
     num_rays = 12
     angles = np.linspace(start_angle, start_angle + spread, num_rays)
@@ -87,27 +88,29 @@ def gen_lidar_data(map, loc, spread=(5, 7)):
     dists = np.zeros(num_rays, dtype=int)
     # Use Bresenham's Line Algorithm
     for i, angle in enumerate(angles):
-        x, y = loc
+        row = agent_loc[0]
+        col = agent_loc[1]
+
         dx = np.cos(angle)
         dy = np.sin(angle)
 
         distance = 0
         while True:
-            x += dx
-            y += dy
+            row += dy
+            col += dx
             distance += 1
 
-            grid_x = int(x)
-            grid_y = int(y)
+            grid_row = int(row)
+            grid_col = int(col)
 
             if (
-                grid_x < 0
-                or grid_x >= map.shape[0]
-                or grid_y < 0
-                or grid_y >= map.shape[1]
+                grid_row < 0
+                or grid_row >= grid.shape[0]
+                or grid_col < 0
+                or grid_col >= grid.shape[1]
             ):
                 break
-            if map[grid_x, grid_y] == 1:
+            if grid[grid_row, grid_col] == 1 or grid[grid_row, grid_col] == 2:
                 break
 
         dists[i] = distance
@@ -115,37 +118,36 @@ def gen_lidar_data(map, loc, spread=(5, 7)):
     return angles, dists
 
 
-# show map
-map = make_map()
-
-# loc = (5, 5)
-# goal_loc = (8, 8)
-# map[goal_loc[0], goal_loc[1]] = 1
+# world = generate_gridworld(10, 10, (5, 5))
+# state = {}  # Example state with agent at (1, 1)
+# state["agent_position"] = (1, 1)
+# state["agent_angle"] = np.pi / 6 # 30 degrees
 # angles = []
 # dists = []
-# for i in range(10):
-#     new_angles, new_dists = gen_lidar_data(map, loc)
-#     angles = angles + new_angles.tolist()
-#     dists = dists + new_dists.tolist()
-
-# state = {}
-# state["loc"] = loc
+# for i in range(1000):
+#     angles_, dists_ = get_lidar_scans(world, state["agent_position"], (5, 7))
+#     angles += list(angles_)
+#     dists += list(dists_)
+# print(angles)
 # state["angles"] = angles
 # state["dists"] = dists
-# img = state_to_image(map, state, goal_loc=goal_loc)
-# cv2.imshow("map", img)
-# cv2.waitKey(0)
+# plot_gridworld(world, state, wait=10)
+
+import gymnasium as gym
+from gymnasium import spaces
+
+import stable_baselines3 as sb3
 
 
 class simEnv(gym.Env):
-    """Custom Environment that follows gym interface."""
-
-    def __init__(self, map):
+    def __init__(self, map_height=5, map_width=5, render_time=.1):
         super().__init__()
 
-        self.map = map
-        self.drivable_terrain = np.argwhere(map == 0)
-        print(f"drivable terrain: {self.drivable_terrain}")
+        self.map_height = map_height
+        self.map_width = map_width
+        assert (
+            self.map_height > 2 and self.map_width > 2
+        ), "Map size must be greater than 2 in both dimensions"
 
         self.action_space = spaces.Discrete(
             3
@@ -153,9 +155,11 @@ class simEnv(gym.Env):
 
         self.turn_angle = np.deg2rad(30)
         self.agent_speed = 1  # configure but keep constant
-        self.dt = 1  # seconds between actions
+        self.dt = 4  # seconds between actions
+        self.render_time = render_time
+        self.lidar_hz = 6
+        self.num_beams = 12
 
-        self.num_scans = int(self.dt * 6)
         self.observation_space = spaces.Dict(
             {
                 "agent_angle": spaces.Box(
@@ -164,159 +168,160 @@ class simEnv(gym.Env):
                     shape=(1,),
                     dtype=np.float32,
                 ),
+                # "agent_loc": spaces.Box(
+                #     low=0,
+                #     high=max(self.map_height, self.map_width),
+                #     shape=(2,),
+                #     dtype=np.float32,
+                # ),
+                # "goal_loc": spaces.Box(
+                #     low=0,
+                #     high=max(self.map_height, self.map_width),
+                #     shape=(2,),
+                #     dtype=np.int32,
+                # ),
                 "angles": spaces.Box(
                     low=0,
                     high=2 * np.pi,
-                    shape=(self.num_scans * 12,),
+                    shape=(self.lidar_hz * self.dt,),
                     dtype=np.float32,
                 ),
                 "dists": spaces.Box(
                     low=0,
-                    high=(max(MAP_DIMS[0], MAP_DIMS[1])),
-                    shape=(self.num_scans * 12,),
+                    high=np.sqrt(
+                        (self.map_height - 1) ** 2 + (self.map_width - 1) ** 2
+                    ),
+                    shape=(self.lidar_hz * self.dt,),
                     dtype=np.float32,
                 ),
             }
         )
 
-        self.goal_loc = (-1, -1)
-        self.agent_loc = (-1, -1)
-        self.agent_angle = -1
+        # the following variables are set in reset()
+        self.map = None
+        self.goal_loc = None
+        # these variables can also be changed in the step() function
+        self.agent_loc = None  # represented as np.array([row, col])
+        self.agent_angle = None  # represented as radians
         self.obs = None
 
     # 0 is forward, 1 is left, 2 is right
     def step(self, action):
-        reward = 0
-        if action == 0:
-            # move forward
+        reward = -1
+        terminated = False
+
+        new_loc = self.agent_loc.copy()
+        if action == 0:  # forward
             dx = self.agent_speed * np.cos(self.agent_angle)
             dy = self.agent_speed * np.sin(self.agent_angle)
-            self.agent_loc[0] += dx
-            self.agent_loc[1] += dy
-            loc_estimate = (int(self.agent_loc[0]), int(self.agent_loc[1]))
-            # check if goal
-            if loc_estimate[0] == self.goal_loc[0] and loc_estimate[1] == self.goal_loc[1]:
-                print("GOAL REACHED")
-                reward = 100
-                terminated = True
-            # check if out of bounds
-            elif (
-                loc_estimate[0] < 0
-                or loc_estimate[0] >= self.map.shape[0]
-                or loc_estimate[1] < 0
-                or loc_estimate[1] >= self.map.shape[1]
-            ):
-                reward = -100
-                terminated = True
-            elif self.map[loc_estimate[0], loc_estimate[1]] == 1:
-                reward = -100
-                terminated = True
-            else:
-                reward = -1
-                terminated = False
+            new_loc = self.agent_loc + np.array([dy, dx])
+            self.agent_loc = new_loc
         elif action == 1:
             # turn left
-            self.agent_angle += self.turn_angle
-            if self.agent_angle > 2 * np.pi:
-                self.agent_angle -= 2 * np.pi
-            reward = -1
-            terminated = False
+            self.agent_angle -= self.turn_angle
+            reward = -0.7
         elif action == 2:
             # turn right
-            self.agent_angle -= self.turn_angle
-            if self.agent_angle < 0:
-                self.agent_angle += 2 * np.pi
-            reward = -1
-            terminated = False
-        loc_estimate = (int(self.agent_loc[0]), int(self.agent_loc[1]))
-        # check if goal
-        if loc_estimate[0] == self.goal_loc[0] and loc_estimate[1] == self.goal_loc[1]:
-            print("GOAL REACHED")
+            self.agent_angle += self.turn_angle
+            reward = -0.7
+
+        # wrap angle
+        self.agent_angle = self.agent_angle % (2 * np.pi)
+
+        estimated_loc = self.estimate_loc()
+
+        # check if out of bounds
+        if (
+            estimated_loc[0] < 0
+            or estimated_loc[0] >= self.map_height
+            or estimated_loc[1] < 0
+            or estimated_loc[1] >= self.map_width
+        ):
+            reward = -10
+            terminated = True
+        elif self.map[estimated_loc[0], estimated_loc[1]] == 1:
+            # hit a wall
+            reward = -10
+            terminated = True
+        elif self.map[estimated_loc[0], estimated_loc[1]] == 2:
+            # reached the goal
             reward = 100
             terminated = True
-        # check if out of bounds
-        elif (
-            loc_estimate[0] < 0
-            or loc_estimate[0] >= self.map.shape[0]
-            or loc_estimate[1] < 0
-            or loc_estimate[1] >= self.map.shape[1]
-        ):
-            reward = -100
-            terminated = True
-        elif self.map[loc_estimate[0], loc_estimate[1]] == 1:
-            reward = -100
-            terminated = True
-        
-        print(f"agent loc: {self.agent_loc}, angle: {np.rad2deg(self.agent_angle)}")
-        print(f"action: {action}, reward: {reward}")
+
+        self.agent_loc = new_loc
 
         self._get_obs()
         return self.obs, reward, terminated, False, {}
 
     def reset(self, seed=None, options=None):
-        # choose random start and goal locations
-        loc_is = np.random.randint(0, len(self.drivable_terrain), 2)
-        self.agent_loc = [float(self.drivable_terrain[loc_is[0]][0]), float(self.drivable_terrain[loc_is[0]][1])]
-        # self.agent_loc = [0,0]
-        self.goal_loc = (self.drivable_terrain[loc_is[1]][0], self.drivable_terrain[loc_is[1]][1])
-        self.agent_angle = np.random.uniform(0, 2 * np.pi)
-        print("RESETTING ENVIRONMENT")
-        print(
-            f"agent loc: {self.agent_loc}, goal loc: {self.goal_loc}, angle: {np.rad2deg(self.agent_angle)}"
-        )
+        # get random goal location and agent start location
+        row_options = np.arange(1, self.map_height - 1)
+        col_options = np.arange(1, self.map_width - 1)
 
-        self.curr_map = np.copy(self.map)
-        self.curr_map[self.goal_loc[0], self.goal_loc[1]] = 1
+        row_picks = np.random.choice(row_options, 2, replace=True)
+        col_picks = np.random.choice(col_options, 2, replace=True)
+        self.agent_loc = np.array([row_picks[0], col_picks[0]])
+        # self.goal_loc = np.array([row_picks[1], col_picks[1]])
+        self.goal_loc = np.array([self.map_height // 2, self.map_width // 2])
+
+        # random multiple of 30 degrees
+        self.agent_angle = np.random.choice(np.arange(0, 2 * np.pi, np.deg2rad(30)))
+
+        # set map
+        self.map = generate_gridworld(
+            self.map_height, self.map_width, (self.goal_loc[0], self.goal_loc[1])
+        )
 
         self._get_obs()
         return self.obs, {}
 
     def render(self):
-        # Render the environment to the screen
-        state = {}
-        state["loc"] = (int(self.agent_loc[0]), int(self.agent_loc[1]))
-        state["angles"] = self.obs["angles"]
-        state["dists"] = self.obs["dists"]
-        state["goal_loc"] = self.goal_loc
-        img = state_to_image(self.map, state, self.goal_loc)
-        cv2.imshow("map", img)
-        cv2.waitKey(self.dt * 100)
+        # plot the gridworld with the agent and goal
+        state = {
+            "agent_position": tuple(self.estimate_loc()),
+            "agent_angle": self.agent_angle,
+            "angles": self.angles,
+            "dists": self.dists,
+        }
+        plot_gridworld(self.map, state, wait=self.render_time)
 
     def close(self):
         pass
 
     def _get_obs(self):
-        # lidar works at about 6hz
+
+        num_scans = self.lidar_hz * self.dt
         angles = []
         dists = []
-        for i in range(self.num_scans):
-            new_angles, new_dists = gen_lidar_data(self.curr_map, self.agent_loc)
-            angles = angles + new_angles.tolist()
-            dists = dists + new_dists.tolist()
-        angles = np.array(angles)
-        dists = np.array(dists)
+        for i in range(num_scans):
+            angle, dist = get_lidar_scans(
+                self.map, self.agent_loc, spread=(5, 7)
+            )
+            angles += [np.average(angle)]
+            dists += [np.average(dist)]
+        self.angles = np.array(angles)
+        self.dists = np.array(dists)
 
         obs = {
             "agent_angle": np.array([self.agent_angle]),
-            "angles": angles,
-            "dists": dists,
+            # "agent_loc": np.array(self.agent_loc),
+            # "goal_loc": np.array(self.goal_loc),
+            "angles": self.angles,
+            "dists": self.dists,
         }
 
         self.obs = obs
 
+    def estimate_loc(self):
+        # estimate the location of the agent based on its angle and speed
+        estimated_loc = np.array([int(self.agent_loc[0]), int(self.agent_loc[1])])
+        return estimated_loc
 
-map = make_map()
-env = simEnv(map)
-model = sb3.PPO("MultiInputPolicy", env, verbose=1)
-model.learn(total_timesteps=10000)
-model.save("ppo_simEnv")
-obs, info = env.reset()
-done = False
-max_steps = 100
-for _ in range(max_steps):
-    if done:
-        break
-    action, _states = model.predict(obs, deterministic=False)
-    obs, reward, done, _, _ = env.step(action)
-    # print(f"action: {action}, reward: {reward}")
-    env.render()
+
+# # drive around
+# env = simEnv(map_height=10, map_width=20)
+# env.reset()
+# env.render()
+# for i in range(100):
+#     env.step(0)
+#     env.render()
