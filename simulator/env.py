@@ -210,7 +210,6 @@ class simEnv(gym.Env):
         reward = -1
         terminated = False
 
-        new_loc = self.agent_loc.copy()
         if action == 0:  # forward
             dx = self.agent_speed * np.cos(self.agent_angle)
             dy = self.agent_speed * np.sin(self.agent_angle)
@@ -248,7 +247,8 @@ class simEnv(gym.Env):
             reward = 100
             terminated = True
 
-        self.agent_loc = new_loc
+        self.steps += 1
+
 
         self._get_obs()
         return self.obs, reward, terminated, False, {}
@@ -271,6 +271,8 @@ class simEnv(gym.Env):
         self.map = generate_gridworld(
             self.map_height, self.map_width, (self.goal_loc[0], self.goal_loc[1])
         )
+
+        self.steps = 0
 
         self._get_obs()
         return self.obs, {}
