@@ -110,28 +110,14 @@ def get_lidar_scans(grid, agent_loc, spread=(5, 7)):
                 or grid_col >= grid.shape[1]
             ):
                 break
-            if grid[grid_row, grid_col] == 1 or grid[grid_row, grid_col] == 2:
+            # if grid[grid_row, grid_col] == 1 or grid[grid_row, grid_col] == 2:
+            if grid[grid_row, grid_col] == 1:
                 break
 
         dists[i] = distance
 
     return angles, dists
 
-
-# world = generate_gridworld(10, 10, (5, 5))
-# state = {}  # Example state with agent at (1, 1)
-# state["agent_position"] = (1, 1)
-# state["agent_angle"] = np.pi / 6 # 30 degrees
-# angles = []
-# dists = []
-# for i in range(1000):
-#     angles_, dists_ = get_lidar_scans(world, state["agent_position"], (5, 7))
-#     angles += list(angles_)
-#     dists += list(dists_)
-# print(angles)
-# state["angles"] = angles
-# state["dists"] = dists
-# plot_gridworld(world, state, wait=10)
 
 import gymnasium as gym
 from gymnasium import spaces
@@ -140,7 +126,7 @@ import stable_baselines3 as sb3
 
 
 class simEnv(gym.Env):
-    def __init__(self, map_height=5, map_width=5, render_time=.1):
+    def __init__(self, map_height=5, map_width=5, render_time=0.1):
         super().__init__()
 
         self.map_height = map_height
@@ -163,34 +149,23 @@ class simEnv(gym.Env):
         self.observation_space = spaces.Dict(
             {
                 "agent_angle": spaces.Box(
-                    low=0,
-                    high=2 * np.pi,
+                    low=-1,
+                    high=1,
                     shape=(1,),
                     dtype=np.float32,
                 ),
-                # "agent_loc": spaces.Box(
-                #     low=0,
-                #     high=max(self.map_height, self.map_width),
-                #     shape=(2,),
-                #     dtype=np.float32,
-                # ),
-                # "goal_loc": spaces.Box(
-                #     low=0,
-                #     high=max(self.map_height, self.map_width),
-                #     shape=(2,),
-                #     dtype=np.int32,
-                # ),
                 "angles": spaces.Box(
-                    low=0,
-                    high=2 * np.pi,
+                    low=-1,
+                    high=1,
                     shape=(self.lidar_hz * self.dt,),
                     dtype=np.float32,
                 ),
                 "dists": spaces.Box(
                     low=0,
-                    high=np.sqrt(
-                        (self.map_height - 1) ** 2 + (self.map_width - 1) ** 2
-                    ),
+                    high=1,
+                    # high=np.sqrt(
+                    #     (self.map_height - 1) ** 2 + (self.map_width - 1) ** 2
+                    # ),
                     shape=(self.lidar_hz * self.dt,),
                     dtype=np.float32,
                 ),
@@ -249,7 +224,6 @@ class simEnv(gym.Env):
 
         self.steps += 1
 
-
         self._get_obs()
         return self.obs, reward, terminated, False, {}
 
@@ -291,39 +265,30 @@ class simEnv(gym.Env):
         pass
 
     def _get_obs(self):
+        max_distance = np.sqrt(self.map_height**2 + self.map_width**2)
 
         num_scans = self.lidar_hz * self.dt
         angles = []
         dists = []
         for i in range(num_scans):
-            angle, dist = get_lidar_scans(
-                self.map, self.agent_loc, spread=(5, 7)
-            )
+            angle, dist = get_lidar_scans(self.map, self.agent_loc, spread=(5, 7))
             angles += [np.average(angle)]
             dists += [np.average(dist)]
         self.angles = np.array(angles)
         self.dists = np.array(dists)
 
-        obs = {
-            "agent_angle": np.array([self.agent_angle]),
-            # "agent_loc": np.array(self.agent_loc),
-            # "goal_loc": np.array(self.goal_loc),
-            "angles": self.angles,
-            "dists": self.dists,
-        }
+        norm_agent_angle = (self.agent_angle / np.pi) - 1  # from [0, 2pi] -> [-1, 1]
+        norm_angles = (self.angles / np.pi) - 1
+        norm_dists = np.array(self.dists, dtype=np.float32) / max_distance
 
+        obs = {
+            "agent_angle": np.array([norm_agent_angle], dtype=np.float32),
+            "angles": norm_angles.astype(np.float32),
+            "dists": norm_dists.astype(np.float32),
+        }
         self.obs = obs
 
     def estimate_loc(self):
         # estimate the location of the agent based on its angle and speed
         estimated_loc = np.array([int(self.agent_loc[0]), int(self.agent_loc[1])])
         return estimated_loc
-
-
-# # drive around
-# env = simEnv(map_height=10, map_width=20)
-# env.reset()
-# env.render()
-# for i in range(100):
-#     env.step(0)
-#     env.render()
